@@ -1,317 +1,654 @@
+
+
+explainish_0.1.1.zip
+zip
+
+Please do a final check on this file before I submit it to chrome store to make sure there is nothing in here that will cause it to be rejected.  If I'm requesting certain permissions, please make sure that I'm actually using those permissions and there's good justification for them.  I've had multiple iterations of this code, so please make sure it's clean and that there's nothing in here from previous versions that is unnecessary. If there are pieces of code left over from previous versions that are not being used, please flag them
+Please also compare to the privacy policy state here to make sure everything looks okay: __https://getexplainish.com/privacy.html__
+
+9:18 AM
+I'll start by reading the skill file for reference, then extract and review your extension thoroughly.
+
+
+Ran 9 commands, viewed 2 files
+Ran 9 commands, viewed 2 files
+Good, now let me read all the files systematically.
+
+
+Ran 11 commands, viewed 5 files
+Ran 11 commands, viewed 5 files
+Now let me fetch the privacy policy:
+
+
+Searched the web
+Searched the web
+The search didn't find the actual getexplainish.com privacy policy. Let me fetch it directly.
+
+
+Searched the web
+Searched the web
+I wasn't able to find or fetch your privacy policy at getexplainish.com/privacy.html — the search engines don't seem to have indexed it yet (the site may be too new). Could you paste the privacy policy text into the chat so I can compare it against what the extension actually does?
+
+In the meantime, here's my comprehensive review of the extension code. I've read every file thoroughly.
+
+Explainish 0.1.1 — Chrome Web Store Submission Review
+PERMISSIONS AUDIT
+Your manifest declares three permissions: activeTab, storage, and sidePanel.
+
+activeTab — Justified. You use chrome.tabs.query and chrome.tabs.sendMessage in sidepanel.js to get the active tab and request page content. Used properly.
+
+storage — Justified. Heavily used throughout for storing the API key, analytics client ID, domain allow/block lists, builtin blacklist, onboarding state, retention tracking, domain counts, and pending context. All legitimate.
+
+sidePanel — Justified. The extension's core UI is a side panel opened via chrome.sidePanel.open().
+
+<all_urls> in content_scripts — This is the one that will draw scrutiny from Chrome Web Store reviewers. Your content script injects on every page to provide the text-selection tooltip (Explain/Simplify/Define). This is a core feature and is justified, but you'll need to clearly explain this in your store listing's "Single Purpose" justification and privacy policy. Reviewers frequently reject extensions with <all_urls> if the justification isn't crystal clear.
+
+No unnecessary permissions detected. You don't request tabs, contextMenus, scripting, host_permissions, or anything else beyond what you use. This is clean.
+
+DUPLICATE / DEAD CODE — FLAGGED ITEMS
+1. domains.js has a full duplicate BLACKLISTED_DOMAINS array that is never used at runtime by the background service worker.
+
+The BLACKLISTED_DOMAINS array in domains.js (lines 18–105) is identical to BUILTIN_BLACKLIST in background.js (lines 53–77). The domains.js file is loaded by sidepanel.html and options.html via <script> tags, where it provides classifyDomain(), allowDomain(), blockDomain(), and resetDomain(). These functions use matchesBlacklist() which references the local BLACKLISTED_DOMAINS array.
+
+Meanwhile, the content script reads the blacklist from chrome.storage.local where background.js placed it via BUILTIN_BLACKLIST. So you have three copies of the same list:
+
+BUILTIN_BLACKLIST in background.js (distributed to storage on install)
+BLACKLISTED_DOMAINS in domains.js (used by sidepanel/options for classifyDomain())
+The copy in chrome.storage.local.builtinBlacklist (read by content.js)
+This works but is a maintenance hazard — if you update one, you could forget the other. The Chrome Web Store won't reject for this, but it's worth noting. Consider having domains.js read from storage like content.js does, eliminating the hardcoded list there.
+
+2. _builtinBlacklist loaded but never read again in content.js.
+
+In content.js line 15, _builtinBlacklist is populated by initDomainClass() (line 25), but it's only used within that same function's for loop. It's stored as module-level state but never accessed elsewhere. This isn't a bug — it's re-read on storage change events — but the variable could be local to the function. Minor.
+
+3. contentBucket variable in background.js line 108 is computed but never used.
+
+js
+const contentBucket = message.content.length < 2000 ? 'short' : message.content.length < 6000 ? 'medium' : 'long';
+This is computed on the SUMMARIZE_PAGE handler but is never included in the analytics track() call on line 114 where content_length uses contentBucket — wait, it IS used on line 116. My mistake, that's fine.
+
+4. hasTrackedTooltipFeature gating in sidepanel.js is slightly inconsistent.
+
+In the sendMessage() function (line ~292), there's a check:
+
+js
+if (!hasTrackedTooltipFeature && sessionFirstFeature === 'summarize' && sessionActionCount === 2) {
+  track('discovered_chat_after_summarize', ...);
+}
+But hasTrackedTooltipFeature only gets set to true inside loadContext(), not in sendMessage(). So discovered_chat_after_summarize could fire even though the user hasn't used the tooltip — this seems intentional as it's tracking a different discovery path (chat after summarize). Just confirming that's by design.
+
+POTENTIAL CHROME WEB STORE REJECTION RISKS
+1. GA4 Measurement Protocol API secret exposed in source (background.js lines 9-12).
+
+The GA_API_SECRET is visible in the source code. Google's own documentation says this is expected for client-side measurement protocol usage and is not a security credential, so this is fine. Your comment on line 11 correctly notes this. Won't cause rejection.
+
+2. The Gemini API key is stored in chrome.storage.local, not chrome.storage.session.
+
+This is appropriate since the key needs to persist across browser restarts. The key is only ever sent to generativelanguage.googleapis.com. This is clean.
+
+3. content.js uses innerHTML with user-controlled content in the popover.
+
+In createPopover(), the simpleMarkdown() function processes the Gemini API response and the result is injected via innerHTML. However, simpleMarkdown() escapes HTML entities first (line 868: replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')), so this is safe against XSS from the API response. Good.
+
+The content parameter in the error state (createPopover('error', content, ...)) is set from hardcoded strings in POPOVER_ERROR_MESSAGES or from friendlyError(), which also uses hardcoded strings. Safe.
+
+4. No externally_connectable or remote code execution.
+
+Your extension doesn't load remote scripts or use eval(). All code is bundled. This is correct and won't trigger rejection.
+
+5. Extension name length.
+
+"Explainish: Explain anything in plain English" is 46 characters. Chrome Web Store limit is 75 characters. You're fine.
+
+DATA FLOW vs PRIVACY POLICY ALIGNMENT
+Since I couldn't fetch the privacy policy, here's exactly what data your extension collects and sends, so you can verify against your policy:
+
+Data sent to Google Gemini API (generativelanguage.googleapis.com):
+
+Page text content (up to 12,000 chars) — for summarization
+Page URL and title — included in the summarize prompt
+Selected/highlighted text — for explain/simplify/define
+Surrounding context (up to 400 chars) — unless on a restricted domain
+Chat message history (up to 20 messages) — for follow-up conversation
+Data sent to Google Analytics (GA4 Measurement Protocol):
+
+Anonymous client ID (random UUID, stored locally)
+Event names: extension_installed, extension_updated, sidepanel_opened, page_summarized, selection_action, chat_message_sent, api_error, repeat_domain_use, session_started, retention_milestone, first_feature_used, time_to_first_open, discovered_tooltip_feature, discovered_chat_after_summarize, discovered_suggestions, suggestion_chip_clicked, new_chat_started, settings_opened, session_depth, first_action_errored, onboarding step events
+Event parameters include: domain name, site category, content length bucket, text length bucket, token counts, session metrics, action type
+non_personalized_ads: true is set in the GA payload
+Data stored locally (chrome.storage.local):
+
+geminiApiKey — user's Gemini API key
+analyticsClientId — random UUID for analytics
+analyticsEnabled — user preference (opt-out)
+builtinBlacklist — copy of hardcoded domain list
+userAllowlist / userBlocklist — user domain preferences
+domainCounts — how many times each domain has been summarized
+pendingContext — temporary storage for tooltip → sidepanel handoff
+firstSeenAt, lastSeenAt, totalSessions — retention metrics
+installTrackedAt, firstUseAt — onboarding/usage metrics
+Things your privacy policy should cover:
+
+Page content and URLs are sent to Google's Gemini API (third party)
+Domain names (not full URLs) are sent to Google Analytics as event parameters — this is a subtle point. The domain parameter in analytics events contains the hostname being summarized. Make sure your policy mentions that domain names visited are included in analytics.
+No page text is sent to analytics (the description in options.html correctly states "Sends basic feature usage events (no page text)")
+The analytics opt-out toggle exists and is respected
+The sensitive domain blacklisting behavior (restricting context on banking/mail/healthcare sites)
+No data is sent to any server you control — the extension is serverless
+MINOR ISSUES & CLEANUP SUGGESTIONS
+1. sidepanel.js uses chrome.tabs.query without the tabs permission.
+
+You use chrome.tabs.query({ active: true, currentWindow: true }) in init(). This works because activeTab grants access to the active tab's URL and title. However, chrome.tabs.create (used in the settings button handler) technically requires no special permission. This is all fine.
+
+2. The logo.svg file is 14KB.
+
+This is the raster-traced SVG you mentioned. It works but may look slightly pixelated at small sizes in the Chrome Web Store listing. Not a rejection risk, just a quality issue you're already aware of.
+
+3. No _locales directory / default_locale field.
+
+Your extension is English-only. This is fine, but if you ever want to internationalize, you'd need to add this. Not a current issue.
+
+4. Version 0.1.1 — Chrome Web Store accepts this.
+
+Some developers prefer starting at 1.0.0 for public release, but 0.1.1 is valid and signals early/beta status.
+
+VERDICT
+The extension is clean and ready for submission from a code quality and permissions standpoint. No leftover dead code from previous iterations that would cause problems. The permissions are all justified and actively used. The main thing I'd recommend before submitting:
+
+Paste or share your privacy policy text so I can verify the data flows above match what's documented — particularly the domain-name-in-analytics detail.
+Prepare a clear "Single Purpose" description for the store submission explaining why <all_urls> is needed (the tooltip needs to work on any page the user visits).
+Consider whether domainCounts (background.js line 375-378) tracking which domains have been summarized and how many times should be mentioned in your privacy policy, since it persists locally.
+
+privacy.html
+html
+
+
+excerpt_from_previous_claude_message.txt
+1 line
+
+txt
+
+Please draft wording for the single purpose description and privacy policy.  The current privacy policy is attached.
+
+4:00 PM
+Let me read the current privacy policy first.
+
+
+Read the privacy policy
+Read the privacy policy
+Good — the privacy policy is thorough. Now let me cross-reference it carefully against the actual code, then draft the single purpose description and any privacy policy updates needed.
+
+
+Find all analytics events being tracked
+Find all analytics events being tracked
+Now let me read the skill file for creating the document, then build the output.
+
+
+Read the docx skill
+Read the docx skill
+The output should be a markdown file since it's advisory text Jonathan will copy-paste, not a formal Word document. Let me do the analysis and create the document.
+
+
+Created a file, read a file
+Created a file, read a file
+Here's the full document. Quick summary of what's in there:
+
+Single Purpose justification — Ready to paste into the Developer Dashboard. It explains why <all_urls> is needed (tooltip on any page + page extraction for summarize), emphasizes that nothing fires until the user acts, and highlights the sensitive-site restrictions.
+
+Privacy policy changes — Your existing policy is in good shape. I found four gaps:
+
+No mention of the content script / <all_urls> justification. Chrome reviewers increasingly expect the privacy policy to explain why the extension needs broad host access. I've drafted a new section for this.
+Onboarding funnel events aren't covered. The "Feature usage events" description should mention setup-flow tracking and error events, since those are tracked in the code. I've drafted a revised version of that data item.
+Google Search grounding is only mentioned for Summarize, but in the code useGrounding = true is passed for all three handlers (summarize, explain, and chat). The table should note this on every row.
+Error tracking events (api_error, first_action_errored) should be acknowledged even though they only contain sanitized codes.
+The document includes the exact HTML snippets to paste into your privacy.html, plus a bonus store listing description if you need one.
+
+Chrome web store submission text
+Document · MD 
+please just update the privacy policy with your additions and give me a fresh html file
+
+4:05 PM
+
+Edited 5 files, ran 2 commands, read a file
+Edited 5 files, ran 2 commands, read a file
+Here's the updated privacy.html with four changes:
+
+"Feature usage events" — expanded to mention onboarding flow tracking and error code logging
+Google Search grounding — added to the Explain/Simplify, Define, and Chat rows (was only on Summarize before)
+New "Content script and host permissions" section — inserted before "Data sharing," explaining why the extension runs on all pages and how sensitive sites are restricted
+Everything else is untouched.
+
+Privacy
+Code · HTML 
+
+
+
+
+Claude is AI and can make mistakes. Please double-check responses.
 Privacy · HTML
 Copy
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Explainish — Privacy Policy</title>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after { box-sizing: border-box; -webkit-font-smoothing: antialiased; }
+
+    :root {
+      --ink: rgba(0,0,0,0.84);
+      --ink-2: rgba(0,0,0,0.52);
+      --ink-3: rgba(0,0,0,0.28);
+      --surface: #f7f7f8;
+      --border: rgba(0,0,0,0.08);
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --font-serif: Georgia, "Times New Roman", Times, serif;
+    }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-      font-size: 16px;
-      line-height: 1.7;
-      color: #1a1a1a;
+      margin: 0;
+      background: var(--surface);
+      font-family: var(--font-sans);
+      color: var(--ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 48px 20px 80px;
+    }
+
+    .card {
       background: #fff;
-      padding: 0 20px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 44px 48px;
+      width: 100%;
+      max-width: 640px;
+      box-shadow: 0 4px 32px rgba(0,0,0,0.06);
     }
 
-    .page {
-      max-width: 680px;
-      margin: 0 auto;
-      padding: 64px 0 96px;
+    @media (max-width: 680px) {
+      .card { padding: 32px 24px; }
     }
 
-    .wordmark {
-      font-size: 15px;
-      font-weight: 600;
-      letter-spacing: -0.01em;
-      color: #1a1a1a;
-      margin-bottom: 48px;
-      display: block;
+    .brand {
+      font-family: var(--font-sans);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--ink-3);
+      letter-spacing: 0.04em;
+      margin-bottom: 28px;
     }
 
     h1 {
-      font-size: 28px;
-      font-weight: 700;
+      font-family: var(--font-serif);
+      font-size: 32px;
+      font-weight: 400;
       letter-spacing: -0.02em;
+      color: var(--ink);
+      margin: 0 0 8px;
       line-height: 1.2;
-      margin-bottom: 6px;
     }
 
     .meta {
       font-size: 13px;
-      color: #888;
-      margin-bottom: 36px;
+      color: var(--ink-3);
+      margin: 0 0 36px;
+      font-weight: 300;
     }
 
     .intro {
       font-size: 15px;
-      color: #444;
-      margin-bottom: 48px;
       line-height: 1.65;
+      color: var(--ink-2);
+      margin: 0 0 36px;
+      font-weight: 300;
     }
 
     h2 {
-      font-size: 17px;
-      font-weight: 650;
-      letter-spacing: -0.01em;
-      margin-top: 48px;
-      margin-bottom: 20px;
-      color: #1a1a1a;
+      font-family: var(--font-serif);
+      font-size: 20px;
+      font-weight: 400;
+      letter-spacing: -0.015em;
+      color: var(--ink);
+      margin: 40px 0 16px;
+      line-height: 1.3;
+    }
+
+    h3 {
+      font-family: var(--font-sans);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      margin: 24px 0 6px;
     }
 
     p {
-      font-size: 15px;
-      color: #333;
-      margin-bottom: 16px;
-      line-height: 1.65;
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--ink-2);
+      margin: 0 0 14px;
+      font-weight: 300;
     }
 
-    .dl-grid {
-      display: grid;
-      gap: 0;
-      margin-bottom: 24px;
+    p strong {
+      font-weight: 500;
+      color: var(--ink);
     }
 
-    .dl-item {
-      display: grid;
-      grid-template-columns: 220px 1fr;
-      gap: 0 24px;
-      padding: 14px 0;
-      border-top: 1px solid #f0f0f0;
-      font-size: 15px;
+    a {
+      color: var(--ink);
+      font-weight: 500;
+      text-decoration: none;
+      border-bottom: 1px solid rgba(0,0,0,0.2);
+      transition: border-color 0.12s;
     }
 
-    .dl-item:last-child {
-      border-bottom: 1px solid #f0f0f0;
+    a:hover {
+      border-color: rgba(0,0,0,0.5);
     }
 
-    .dl-term {
-      font-weight: 580;
-      color: #1a1a1a;
-      padding-right: 8px;
+    .data-item {
+      margin-bottom: 18px;
+      padding: 14px 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
     }
 
-    .dl-desc {
-      color: #444;
+    .data-item-label {
+      font-size: 13.5px;
+      font-weight: 500;
+      color: var(--ink);
+      margin-bottom: 4px;
+    }
+
+    .data-item-desc {
+      font-size: 12.5px;
       line-height: 1.6;
+      color: var(--ink-2);
+      font-weight: 300;
+      margin: 0;
     }
 
-    .dl-desc em {
-      font-style: italic;
-    }
-
-    .never-list {
-      list-style: none;
-      margin: 0 0 16px;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 0;
-    }
-
-    .never-list li {
+    .never-item {
       display: flex;
       align-items: flex-start;
       gap: 10px;
-      font-size: 15px;
-      color: #333;
-      padding: 10px 0;
-      border-top: 1px solid #f0f0f0;
+      margin-bottom: 10px;
+      font-size: 13.5px;
       line-height: 1.55;
-    }
-
-    .never-list li:last-child {
-      border-bottom: 1px solid #f0f0f0;
+      color: var(--ink-2);
+      font-weight: 300;
     }
 
     .never-icon {
       flex-shrink: 0;
-      width: 18px;
-      height: 18px;
-      background: #fef2f2;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-top: 1px;
-      font-size: 10px;
-      color: #dc2626;
-      font-weight: 700;
-      line-height: 1;
-    }
-
-    a {
-      color: #1a1a1a;
-      text-decoration: underline;
-      text-underline-offset: 2px;
-    }
-
-    a:hover { color: #555; }
-
-    code {
-      font-family: 'SF Mono', 'Fira Code', 'Menlo', monospace;
+      color: #c0392b;
+      font-weight: 600;
       font-size: 13px;
-      background: #f5f5f5;
-      border-radius: 4px;
-      padding: 1px 6px;
-      color: #1a1a1a;
+      margin-top: 1px;
     }
 
-    hr {
+    .divider {
       border: none;
-      border-top: 1px solid #ebebeb;
-      margin: 48px 0 24px;
+      border-top: 1px solid var(--border);
+      margin: 36px 0;
     }
 
     .footer-note {
-      font-size: 13px;
-      color: #aaa;
+      font-size: 12px;
+      color: var(--ink-3);
+      text-align: center;
+      margin: 32px 0 0;
+      font-weight: 300;
     }
 
-    @media (max-width: 560px) {
-      .dl-item {
-        grid-template-columns: 1fr;
-        gap: 4px;
-      }
-      .dl-term {
-        font-size: 14px;
-      }
+    /* Data flow table for CWS compliance */
+    .flow-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0 20px;
+      font-size: 13px;
+    }
+
+    .flow-table th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .flow-table td {
+      padding: 10px 12px;
+      color: var(--ink-2);
+      border-bottom: 1px solid var(--border);
+      font-weight: 300;
+      line-height: 1.5;
+      vertical-align: top;
+    }
+
+    .flow-table td:first-child {
+      font-weight: 400;
+      color: var(--ink);
+      white-space: nowrap;
     }
   </style>
 </head>
 <body>
-  <div class="page">
-
-    <span class="wordmark">Explainish</span>
+  <div class="card">
+    <div class="brand">Explainish</div>
 
     <h1>Privacy Policy</h1>
     <p class="meta">Chrome Extension &nbsp;·&nbsp; Last updated: March 2026</p>
 
     <p class="intro">Explainish is a Chrome extension that helps you understand web content using Google's Gemini AI. This policy explains exactly what data is collected, how it is used, and what is never collected.</p>
 
-    <!-- ── What we collect ── -->
+    <!-- ────────────────────────────────────────────────────────────────── -->
+    <h2>Data sent to Google's Gemini API</h2>
+
+    <p>Explainish processes all AI requests directly between your browser and Google's Gemini API using your own API key. No content ever passes through any server operated by Explainish. The table below shows exactly what data is sent for each feature:</p>
+
+    <table class="flow-table">
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>Data sent to Gemini</th>
+          <th>Destination</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Summarize</td>
+          <td>Page title, URL, and visible page text (up to ~12,000 characters). Google Search grounding may be enabled, meaning Google may perform searches based on your page content.</td>
+          <td>Google Gemini API</td>
+        </tr>
+        <tr>
+          <td>Explain / Simplify</td>
+          <td>Your highlighted text and, on non-restricted sites, a short surrounding passage (~400 characters) for context. Google Search grounding is enabled, meaning Google may perform web searches to provide more accurate responses.</td>
+          <td>Google Gemini API</td>
+        </tr>
+        <tr>
+          <td>Define</td>
+          <td>Your highlighted text and surrounding context (same as Explain). Google Search grounding is enabled.</td>
+          <td>Google Gemini API</td>
+        </tr>
+        <tr>
+          <td>Chat follow-ups</td>
+          <td>Your question, prior conversation messages, and page text (first message only). Google Search grounding is enabled.</td>
+          <td>Google Gemini API</td>
+        </tr>
+        <tr>
+          <td>Restricted sites</td>
+          <td>Highlighted text only — no page content, no surrounding context. Webmail, banking, healthcare, and government portals are restricted by default.</td>
+          <td>Google Gemini API</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>Your API key is transmitted to Google's Gemini API via a secure HTTP header (<code style="font-size:12px; background:rgba(0,0,0,0.05); padding:1px 5px; border-radius:4px;">x-goog-api-key</code>), never as a URL parameter. The key is stored only on your device and is never transmitted to Explainish.</p>
+
+    <p>Gemini API usage is governed by <a href="https://ai.google.dev/terms" target="_blank">Google's API Terms of Service</a> and <a href="https://policies.google.com/privacy" target="_blank">Google's Privacy Policy</a>.</p>
+
+    <!-- ────────────────────────────────────────────────────────────────── -->
     <h2>What we collect</h2>
 
-    <p>Explainish collects usage analytics associated with a randomly generated installation ID to understand how the extension is being used and to improve it over time. This includes:</p>
+    <p>Explainish collects anonymous usage analytics to understand how the extension is used and improve it over time. Analytics are <strong>opt-out</strong> and can be disabled at any time in Settings. This includes:</p>
 
-    <div class="dl-grid">
-      <div class="dl-item">
-        <span class="dl-term">Anonymous installation ID</span>
-        <span class="dl-desc">A randomly generated UUID created at install time and stored locally on your device. It is not linked to your name, email, or any personal identity.</span>
-      </div>
-      <div class="dl-item">
-        <span class="dl-term">Feature usage events</span>
-        <span class="dl-desc">Actions such as opening the panel, running a summarize, using the explain or simplify tooltip, or sending a chat message.</span>
-      </div>
-      <div class="dl-item">
-        <span class="dl-term">Domain name of the active page</span>
-        <span class="dl-desc">The hostname only (e.g. <em>example.com</em>), not the full URL, page content, or browsing history.</span>
-      </div>
-      <div class="dl-item">
-        <span class="dl-term">General website category</span>
-        <span class="dl-desc">A content category inferred from the domain (e.g. "news", "tech", "academic"). Derived locally; the full domain list is not transmitted.</span>
-      </div>
-      <div class="dl-item">
-        <span class="dl-term">Token counts</span>
-        <span class="dl-desc">The number of prompt and response tokens consumed per Gemini API call. Used to understand typical usage scale. No content is included.</span>
-      </div>
-      <div class="dl-item">
-        <span class="dl-term">Session and retention signals</span>
-        <span class="dl-desc">How often the extension is opened, days since install, and total session count. Calculated locally and transmitted as aggregate numbers.</span>
-      </div>
+    <div class="data-item">
+      <div class="data-item-label">Anonymous installation ID</div>
+      <p class="data-item-desc">A randomly generated UUID created at install time and stored locally on your device. It is not linked to your name, email, or any personal identity.</p>
     </div>
 
-    <p>Analytics events are sent from your browser to Google Analytics via the Measurement Protocol. We do not operate a server that receives or stores this data. Google Analytics may collect technical information such as IP address and browser metadata under its own privacy practices, described at <a href="https://policies.google.com/privacy">policies.google.com/privacy</a>.</p>
+    <div class="data-item">
+      <div class="data-item-label">Feature usage events</div>
+      <p class="data-item-desc">Actions such as opening the panel, summarizing a page, using the explain, simplify, or define tooltip, sending a chat message, and progressing through the initial setup flow. When an API request fails, a generic error code (e.g. "rate limit") is also logged. These events include only the action name, general parameters (e.g. step number, action type, error code), and a random session identifier. No page content, highlighted text, or personally identifiable information is included.</p>
+    </div>
 
-    <!-- ── Data stored on your device ── -->
+    <div class="data-item">
+      <div class="data-item-label">Domain name of the active page</div>
+      <p class="data-item-desc">The hostname only (e.g. <em>example.com</em>), not the full URL, page content, or browsing history.</p>
+    </div>
+
+    <div class="data-item">
+      <div class="data-item-label">General website category</div>
+      <p class="data-item-desc">A content category inferred from the domain (e.g. "news", "tech", "academic"). Derived locally; the full domain list is not transmitted.</p>
+    </div>
+
+    <div class="data-item">
+      <div class="data-item-label">Token counts</div>
+      <p class="data-item-desc">The number of prompt and response tokens consumed per Gemini API call. Used to understand typical usage scale. No content is included.</p>
+    </div>
+
+    <div class="data-item">
+      <div class="data-item-label">Session and retention signals</div>
+      <p class="data-item-desc">How often the extension is opened, days since install, and total session count. Calculated locally and transmitted as aggregate numbers.</p>
+    </div>
+
+    <p>Analytics events are sent from your browser to Google Analytics via the Measurement Protocol. We do not operate a server that receives or stores this data. Google Analytics may collect technical information such as IP address and browser metadata under its own privacy practices, described at <a href="https://policies.google.com/privacy" target="_blank">policies.google.com/privacy</a>.</p>
+
+    <!-- ────────────────────────────────────────────────────────────────── -->
     <h2>Data stored on your device</h2>
 
-    <p>The following data is stored locally in your browser using <code>chrome.storage.local</code> and never transmitted to Explainish servers:</p>
+    <p>The following data is stored locally in your browser using <code style="font-size:12px; background:rgba(0,0,0,0.05); padding:1px 5px; border-radius:4px;">chrome.storage.local</code> and never transmitted to Explainish servers:</p>
 
-    <div class="dl-grid">
-      <div class="dl-item">
-        <span class="dl-term">Your Gemini API key</span>
-        <span class="dl-desc">Stored only on your device. Used exclusively to make requests directly from your browser to Google's Gemini API.</span>
-      </div>
-      <div class="dl-item">
-        <span class="dl-term">Anonymous analytics ID</span>
-        <span class="dl-desc">The randomly generated installation ID described above.</span>
-      </div>
-      <div class="dl-item">
-        <span class="dl-term">Session counters and timestamps</span>
-        <span class="dl-desc">First-seen date, last-seen date, total session count, and per-domain usage counters. Used to calculate retention signals locally before transmission.</span>
-      </div>
-      <div class="dl-item">
-        <span class="dl-term">Auto-summarize preferences</span>
-        <span class="dl-desc">Any domains you have added to or removed from the auto-summarize allow list.</span>
-      </div>
+    <div class="data-item">
+      <div class="data-item-label">Your Gemini API key</div>
+      <p class="data-item-desc">Stored only on your device. Used exclusively to make requests directly from your browser to Google's Gemini API.</p>
     </div>
 
-    <!-- ── What we never collect ── -->
+    <div class="data-item">
+      <div class="data-item-label">Anonymous analytics ID</div>
+      <p class="data-item-desc">The randomly generated installation ID described above.</p>
+    </div>
+
+    <div class="data-item">
+      <div class="data-item-label">Session counters and timestamps</div>
+      <p class="data-item-desc">First-seen date, last-seen date, total session count, and per-domain usage counters. Used to calculate retention signals locally before transmission.</p>
+    </div>
+
+    <div class="data-item">
+      <div class="data-item-label">Auto-summarize preferences</div>
+      <p class="data-item-desc">Any domains you have added to or removed from the auto-summarize allow list or block list.</p>
+    </div>
+
+    <div class="data-item">
+      <div class="data-item-label">Sensitive-site blacklist</div>
+      <p class="data-item-desc">A built-in list of domains (webmail, banking, healthcare, government) distributed to content scripts via local storage. This list is not transmitted externally.</p>
+    </div>
+
+    <!-- ────────────────────────────────────────────────────────────────── -->
     <h2>What we never collect</h2>
 
-    <ul class="never-list">
-      <li><span class="never-icon">✕</span>Your name, email address, or any directly identifying personal information</li>
-      <li><span class="never-icon">✕</span>The content of pages you visit or summarize — this is sent directly to Google's Gemini API and never received or stored by Explainish</li>
-      <li><span class="never-icon">✕</span>Your prompts or AI responses — these pass directly between your browser and Google's API</li>
-      <li><span class="never-icon">✕</span>Full URLs — these are sent to Google's Gemini API as part of summarize requests, but are never received or stored by Explainish</li>
-      <li><span class="never-icon">✕</span>Your complete browsing history</li>
-      <li><span class="never-icon">✕</span>Your Gemini API key</li>
-      <li><span class="never-icon">✕</span>Page titles — these are sent to Google's Gemini API as part of summarize requests, but are never received or stored by Explainish</li>
-    </ul>
+    <div class="never-item">
+      <span class="never-icon">&times;</span>
+      <span>Your name, email address, or any directly identifying personal information</span>
+    </div>
 
-    <!-- ── Your API key ── -->
+    <div class="never-item">
+      <span class="never-icon">&times;</span>
+      <span>The content of pages you visit or summarize</span>
+    </div>
+
+    <div class="never-item">
+      <span class="never-icon">&times;</span>
+      <span>Your prompts or AI responses — these pass directly between your browser and Google's API</span>
+    </div>
+
+    <div class="never-item">
+      <span class="never-icon">&times;</span>
+      <span>Full URLs or complete browsing history</span>
+    </div>
+
+    <div class="never-item">
+      <span class="never-icon">&times;</span>
+      <span>Your Gemini API key</span>
+    </div>
+
+    <div class="never-item">
+      <span class="never-icon">&times;</span>
+      <span>Page titles (these are sent to Google's Gemini API as part of summarize requests, but are never received or stored by Explainish)</span>
+    </div>
+
+    <!-- ────────────────────────────────────────────────────────────────── -->
     <h2>Your API key</h2>
 
     <p>Explainish requires a Google Gemini API key to function. This key is stored exclusively in your browser's local storage on your own device. It is never transmitted to us, never stored on any server, and never shared with any third party. Its only purpose is to authenticate direct requests from your browser to Google's Gemini API.</p>
 
-    <!-- ── Page content and AI processing ── -->
-    <h2>Page content and AI processing</h2>
+    <!-- ────────────────────────────────────────────────────────────────── -->
+    <h2>Sensitive site protections</h2>
 
-    <p>When you use Explainish to summarize a page, the page content, page title, and full URL are sent directly from your browser to Google's Gemini API (currently <em>gemini-2.5-flash-lite</em>) using your own API key. Explainish has no server; this content never passes through any infrastructure we control.</p>
+    <p>Explainish includes a built-in list of sensitive domains — webmail providers, banks, healthcare portals, and government sites — where auto-summarize is paused and tooltip actions send only highlighted text, never surrounding context. This protects against inadvertent exposure of private information. You can override these defaults on a per-site basis in Settings.</p>
 
-    <p>When you use the Explain, Simplify, or Define tooltip actions on highlighted text, the highlighted text is sent to the Gemini API. On most sites, a short passage of surrounding context (up to approximately 400 characters) is also included to help Gemini provide a more accurate answer. On sensitive sites — such as webmail, banking, and healthcare portals — only the highlighted text is sent and no surrounding context is included.</p>
+    <!-- ────────────────────────────────────────────────────────────────── -->
+    <h2>Content script and host permissions</h2>
 
-    <p>Gemini API requests may use Google Search grounding, which means Google may perform searches based on your page content or highlighted text to provide up-to-date answers. This behavior is governed by <a href="https://ai.google.dev/terms">Google's API Terms of Service</a> and <a href="https://policies.google.com/privacy">Google's Privacy Policy</a>.</p>
+    <p>Explainish runs a content script on every web page you visit. This script enables two features: the text-selection tooltip (Explain, Simplify, Define) and page content extraction for the Summarize feature. The content script does not automatically send any data to external services — data is only transmitted when you take an explicit action, such as highlighting text and clicking a tooltip button, or opening the side panel.</p>
 
-    <!-- ── Data sharing ── -->
+    <p>On sensitive sites (webmail, banking, healthcare, and government portals), the content script restricts its behavior automatically: auto-summarize is paused and tooltip actions send only your highlighted text, with no surrounding page context. You can customize these protections per-site in Settings.</p>
+
+    <!-- ────────────────────────────────────────────────────────────────── -->
     <h2>Data sharing</h2>
 
     <p>We do not sell, rent, or share your data with any third party. Anonymous analytics data flows to Google Analytics solely to help us understand and improve the extension. No personally identifiable information is ever shared.</p>
 
-    <!-- ── Data retention ── -->
+    <!-- ────────────────────────────────────────────────────────────────── -->
     <h2>Data retention</h2>
 
     <p>Analytics data is retained in Google Analytics for 14 months, after which it is automatically deleted. We do not store page content, prompts, AI responses, or API keys. Local device data (preferences, session counters) persists until you uninstall the extension or clear your browser storage.</p>
 
-    <!-- ── Your rights ── -->
+    <!-- ────────────────────────────────────────────────────────────────── -->
     <h2>Your rights</h2>
 
     <p>Depending on your jurisdiction, you may have rights regarding access, correction, or deletion of personal data. Because Explainish does not collect personally identifiable information, we are generally unable to associate analytics data with any specific individual. If you have questions or requests regarding your data, please contact us via the support email listed on our Chrome Web Store page.</p>
 
-    <!-- ── Children's privacy ── -->
+    <!-- ────────────────────────────────────────────────────────────────── -->
     <h2>Children's privacy</h2>
 
     <p>Explainish is not directed at children under the age of 13. We do not knowingly collect any information from children.</p>
 
-    <!-- ── Changes ── -->
+    <!-- ────────────────────────────────────────────────────────────────── -->
     <h2>Changes to this policy</h2>
 
     <p>If we make material changes to this policy, we will update the date at the top of this page. Continued use of the extension after changes constitutes acceptance of the updated policy.</p>
 
-    <!-- ── Contact ── -->
+    <!-- ────────────────────────────────────────────────────────────────── -->
     <h2>Contact</h2>
 
     <p>If you have any questions about this privacy policy, please contact us via the support email listed on the Chrome Web Store listing page.</p>
 
-    <hr />
-    <p class="footer-note">Explainish is an independent product and is not affiliated with Google LLC.</p>
+    <hr class="divider">
 
+    <p class="footer-note">Explainish is an independent product and is not affiliated with Google LLC.</p>
   </div>
 </body>
 </html>
